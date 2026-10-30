@@ -12,8 +12,8 @@
   (click)="activateCard($event)"
   (keydown.enter)="activateCard($event)"
   (keydown.space)="activateCard($event)"
-  (dblclick)="cardDblClicked.emit({ workPackageId: workPackage.id, event: $event })"
-  (contextmenu)="cardContextMenu.emit({ workPackageId: workPackage.id, event: $event })"
+  (dblclick)="workPackage.id !== null && cardDblClicked.emit({ workPackageId: workPackage.id, event: $event })"
+  (contextmenu)="workPackage.id !== null && cardContextMenu.emit({ workPackageId: workPackage.id, event: $event })"
   >
 
   <div class="op-wp-single-card--highlighting"
