@@ -26,7 +26,8 @@
 //++
 
 import { CommonModule } from '@angular/common';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Injector, NO_ERRORS_SCHEMA } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Injector, NO_ERRORS_SCHEMA, NgModule } from '@angular/core';
+import { OpSharedModule } from 'core-app/shared/shared.module';
 import { ComponentFixture, TestBed } from '@angular/core/testing';
 import { fireEvent, screen, waitFor } from '@testing-library/dom';
 import { of } from 'rxjs';
@@ -330,10 +331,17 @@ describe('SortHeaderDirective relation columns', () => {
   standalone: false,
 })
 class TwoTablesHostComponent {
-  column:object;
+  column:QueryColumn;
 
   tables:WorkPackageTable[];
 }
+
+@NgModule({
+  imports: [OpSharedModule],
+  declarations: [TwoTablesHostComponent],
+  schemas: [NO_ERRORS_SCHEMA],
+})
+class TwoTablesHostModule {}
 
 describe('SortHeaderDirective relation columns in several tables', () => {
   const column = {
@@ -349,10 +357,15 @@ describe('SortHeaderDirective relation columns in several tables', () => {
 
   beforeEach(async () => {
     contextMenu = { show: vi.fn(), close: vi.fn(), isActive: () => false };
+    TestBed.overrideModule(TwoTablesHostModule, {
+      set: {
+        imports: [CommonModule, OpTooltipDirective],
+        declarations: [TwoTablesHostComponent, SortHeaderDirective, OpColumnsContextMenu],
+        schemas: [NO_ERRORS_SCHEMA],
+      },
+    });
     await TestBed.configureTestingModule({
-      declarations: [TwoTablesHostComponent, SortHeaderDirective, OpColumnsContextMenu],
-      imports: [CommonModule, OpTooltipDirective],
-      schemas: [NO_ERRORS_SCHEMA],
+      imports: [TwoTablesHostModule],
       providers: [
         ...harnessProviders(new FakeDragAndDropService(), { workPackages: [] }),
         WorkPackageViewBaselineService, ConfigurationService, TimezoneService, WeekdayService,
@@ -369,7 +382,7 @@ describe('SortHeaderDirective relation columns in several tables', () => {
       buildTable({ workPackages: [], configuration: { columnMenuEnabled: true } }),
     );
     fixture = TestBed.createComponent(TwoTablesHostComponent);
-    fixture.componentInstance.column = column;
+    fixture.componentInstance.column = column as unknown as QueryColumn;
     fixture.componentInstance.tables = tables.map((harness) => harness.table);
     TestBed.inject(IsolatedQuerySpace).available.sortBy.putValue([]);
     fixture.detectChanges();
