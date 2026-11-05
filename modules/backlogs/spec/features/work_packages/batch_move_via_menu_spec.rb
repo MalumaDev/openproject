@@ -71,16 +71,16 @@ RSpec.describe "Move selected backlog cards to a position via their menu",
       items: [stories[2], stories[3], stories[0], stories[1], stories[4], stories[5]]
     )
     live_region.expect_announcement("2 work packages moved to positions 1 through 2 of 6")
-    backlogs_page.expect_no_selected_cards
+    backlogs_page.expect_selected_cards_in_order(stories[2], stories[3])
     backlogs_page.expect_backlogs_axe_clean
-
-    backlogs_page.select_contiguous_cards(stories[2], stories[3])
     backlogs_page.move_selected_cards(invoker: stories[3], action: "Move down")
 
     backlogs_page.expect_sprint_items_in_order(
       sprint,
       items: [stories[0], stories[2], stories[3], stories[1], stories[4], stories[5]]
     )
+    backlogs_page.extend_selection_to(stories[0])
+    backlogs_page.expect_selected_cards_in_order(stories[0], stories[2])
 
     backlogs_page.visit!
     backlogs_page.expect_sprint_items_in_order(
@@ -101,9 +101,8 @@ RSpec.describe "Move selected backlog cards to a position via their menu",
       sprint,
       items: [stories[0], stories[1], stories[4], stories[5], stories[2], stories[3]]
     )
-    backlogs_page.expect_no_selected_cards
+    backlogs_page.expect_selected_cards_in_order(stories[2], stories[3])
 
-    backlogs_page.select_contiguous_cards(stories[2], stories[3])
     backlogs_page.move_selected_cards(invoker: stories[2], action: "Move up")
 
     backlogs_page.expect_sprint_items_in_order(
@@ -116,6 +115,34 @@ RSpec.describe "Move selected backlog cards to a position via their menu",
       sprint,
       items: [stories[0], stories[1], stories[4], stories[2], stories[3], stories[5]]
     )
+  end
+
+  it "retains the batch and rebinds its anchor when a dialog's members already occupy the destination" do
+    sprint = create(:sprint, project:, name: "Sprint")
+    destination = create(:sprint, project:, name: "Destination")
+    stories = create_sprint_stories(sprint, count: 4)
+    destination_story = create(:work_package, project:, type:, sprint: destination)
+    backlogs_page.visit!
+    backlogs_page.select_contiguous_cards(stories[1], stories[2])
+    backlogs_page.activate_card_menu_action(stories[2], "Move to sprint", via: :more)
+    backlogs_page.expect_destination_dialog("Move to sprint", work_packages: [stories[1], stories[2]])
+    concurrently_moved = Backlogs::WorkPackages::BatchUpdateService
+      .new(user: current_user, work_packages: [stories[1], stories[2]])
+      .call(list_type: "sprint", list_id: destination.id)
+    expect(concurrently_moved).to be_success
+
+    within(:dialog, "Move to sprint") do
+      select destination.name, from: Sprint.human_model_name
+      click_on "Move"
+    end
+
+    backlogs_page.expect_sprint_items_in_order(sprint, items: [stories[0], stories[3]])
+    backlogs_page.expect_sprint_items_in_order(destination, items: [destination_story, stories[1], stories[2]])
+    backlogs_page.expect_selected_cards_in_order(stories[1], stories[2])
+    wait_for { destination.work_packages_for(project).pluck(:id) }
+      .to eq [destination_story.id, stories[1].id, stories[2].id]
+    backlogs_page.extend_selection_to(destination_story)
+    backlogs_page.expect_selected_cards_in_order(destination_story, stories[1], stories[2])
   end
 
   it "keeps the singular menu contract for an unselected card" do
