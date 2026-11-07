@@ -55,10 +55,7 @@ import { UrlParamsService } from 'core-app/core/navigation/url-params.service';
   selector: 'wp-embedded-table',
   templateUrl: './wp-embedded-table.html',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageEmbeddedTableComponent extends WorkPackageEmbeddedBaseComponent implements OnInit, AfterViewInit, OnDestroy {
   @Input() public queryId?:string;
@@ -150,12 +147,13 @@ export class WorkPackageEmbeddedTableComponent extends WorkPackageEmbeddedBaseCo
       .pipe(take(1))
       .subscribe(() => {
         this.showTablePagination = query.results.total > query.results.count;
-        this.setLoaded();
 
         // Disable compact mode when timeline active
         if (this.wpTableTimeline.isVisible) {
           this.configuration = { ...this.configuration, compactTableStyle: false };
         }
+
+        this.setLoaded();
       });
   }
 
@@ -182,6 +180,7 @@ export class WorkPackageEmbeddedTableComponent extends WorkPackageEmbeddedBaseCo
     }
 
     this.error = null;
+    this.cdRef.markForCheck();
     const promise = this
       .apiv3Service
       .queries

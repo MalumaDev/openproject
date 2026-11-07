@@ -51,10 +51,7 @@ export const WpTableConfigurationModalPrependToken = new InjectionToken<Componen
 @Component({
   templateUrl: './wp-table-configuration.modal.html',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WpTableConfigurationModalComponent extends OpModalComponent implements OnInit, OnDestroy {
   prependModalComponent = inject<ComponentType<unknown> | null>(WpTableConfigurationModalPrependToken, { optional: true });
@@ -108,8 +105,7 @@ export class WpTableConfigurationModalComponent extends OpModalComponent impleme
       .then(() => {
         const initialTabName = this.locals.initialTab as string|undefined;
         const initialTab = this.availableTabs.find((el) => el.id === initialTabName);
-        this.switchTo(initialTab || this.availableTabs[0]);
-        this.cdRef.detectChanges();
+        this.switchTo(initialTab ?? this.availableTabs[0]);
       });
   }
 
@@ -128,6 +124,7 @@ export class WpTableConfigurationModalComponent extends OpModalComponent impleme
 
   public switchTo(tab:TabInterface):void {
     this.tabPortalHost.switchTo(tab);
+    this.cdRef.markForCheck();
   }
 
   public saveChanges():void {
