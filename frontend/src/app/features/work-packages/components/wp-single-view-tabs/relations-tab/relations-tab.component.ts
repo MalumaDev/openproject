@@ -37,10 +37,7 @@ import { Subscription } from 'rxjs';
   // eslint-disable-next-line @angular-eslint/component-selector
   selector: 'wp-relations-tab',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageRelationsTabComponent extends UntilDestroyedMixin implements OnChanges {
   readonly I18n = inject(I18nService);

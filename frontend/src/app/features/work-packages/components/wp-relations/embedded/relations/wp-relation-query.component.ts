@@ -51,10 +51,7 @@ import { GroupDescriptor } from 'core-app/features/work-packages/components/wp-s
     { provide: WorkPackageInlineCreateService, useClass: WpRelationInlineCreateService },
   ],
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageRelationQueryComponent extends WorkPackageRelationQueryBase implements OnInit {
   protected readonly PathHelper = inject(PathHelperService);

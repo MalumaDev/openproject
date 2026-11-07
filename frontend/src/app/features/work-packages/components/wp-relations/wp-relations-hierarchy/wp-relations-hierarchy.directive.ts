@@ -43,10 +43,7 @@ import { SchemaCacheService, fallbackSchemaId } from 'core-app/core/schemas/sche
   templateUrl: './wp-relations-hierarchy.template.html',
   hostDirectives: [WorkPackageIsolatedQuerySpaceDirective],
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageRelationsHierarchyComponent extends UntilDestroyedMixin implements OnChanges {
   readonly apiV3Service = inject(ApiV3Service);

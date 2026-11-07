@@ -38,10 +38,7 @@ import { WorkPackageRelationsService } from '../wp-relations.service';
   selector: 'wp-relations-create',
   templateUrl: './wp-relation-create.template.html',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageRelationsCreateComponent {
   readonly I18n = inject(I18nService);
@@ -71,7 +68,7 @@ export class WorkPackageRelationsCreateComponent {
   public onSelected(workPackage?:WorkPackageResource) {
     if (workPackage) {
       this.selectedWpId = workPackage.id!;
-      this.createCommonRelation();
+      void this.createCommonRelation();
     }
   }
 

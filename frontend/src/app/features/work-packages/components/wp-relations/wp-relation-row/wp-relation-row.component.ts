@@ -27,7 +27,7 @@
 
 import { WorkPackageResource } from 'core-app/features/hal/resources/work-package-resource';
 import { PathHelperService } from 'core-app/core/path-helper/path-helper.service';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, Input, OnChanges, SimpleChanges, ViewChild, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, Input, Injector, OnChanges, SimpleChanges, ViewChild, afterNextRender, inject } from '@angular/core';
 import { I18nService } from 'core-app/core/i18n/i18n.service';
 import { HalEventsService } from 'core-app/features/hal/services/hal-events.service';
 import { WorkPackageNotificationService } from 'core-app/features/work-packages/services/notifications/work-package-notification.service';
@@ -45,10 +45,7 @@ import { Subscription } from 'rxjs';
   selector: 'wp-relation-row',
   templateUrl: './wp-relation-row.template.html',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class WorkPackageRelationRowComponent extends UntilDestroyedMixin implements OnChanges {
   protected apiV3Service = inject(ApiV3Service);
@@ -59,6 +56,7 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   protected cdRef = inject(ChangeDetectorRef);
   protected PathHelper = inject(PathHelperService);
 
+  private readonly injector = inject(Injector);
   private relatedWorkPackageSubscription?:Subscription;
 
   @Input() public workPackage:WorkPackageResource;
@@ -151,15 +149,16 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
 
   public startDescriptionEdit() {
     this.userInputs.showDescriptionEditForm = true;
-    setTimeout(() => {
-      const textarea = this.relationDescriptionTextarea.nativeElement;
-      const textlen = textarea.value.length;
-      // Focus and set cursor to end
-      textarea.focus();
-
-      textarea.selectionStart = textlen;
-      textarea.selectionEnd = textlen;
-    });
+    afterNextRender({
+      write: () => {
+        const textarea = this.relationDescriptionTextarea?.nativeElement;
+        if (textarea) {
+          const textEnd = textarea.value.length;
+          textarea.focus();
+          textarea.setSelectionRange(textEnd, textEnd);
+        }
+      },
+    }, { injector: this.injector });
   }
 
   public handleDescriptionKey(event:KeyboardEvent) {
@@ -183,7 +182,7 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
         this.relatedWorkPackage.relatedBy = savedRelation;
         this.userInputs.showDescriptionEditForm = false;
         this.notificationService.showSave(this.relatedWorkPackage);
-        this.cdRef.detectChanges();
+        this.cdRef.markForCheck();
       });
   }
 
@@ -214,7 +213,7 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
         this.relation = savedRelation;
 
         this.userInputs.showRelationTypesForm = false;
-        this.cdRef.detectChanges();
+        this.cdRef.markForCheck();
       })
       .catch((error:unknown) => this.notificationService.handleRawError(error, this.workPackage));
   }
