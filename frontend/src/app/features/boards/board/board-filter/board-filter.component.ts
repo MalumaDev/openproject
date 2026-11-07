@@ -47,10 +47,7 @@ import * as Turbo from '@hotwired/turbo';
   selector: 'board-filter',
   templateUrl: './board-filter.component.html',
   standalone: false,
-  // TODO: This component has been partially migrated to be zoneless-compatible.
-  // After testing, this should be updated to ChangeDetectionStrategy.OnPush.
-  // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
-  changeDetection: ChangeDetectionStrategy.Eager,
+  changeDetection: ChangeDetectionStrategy.OnPush,
 })
 export class BoardFilterComponent extends UntilDestroyedMixin implements AfterViewInit {
   private readonly currentProjectService = inject(CurrentProjectService);
