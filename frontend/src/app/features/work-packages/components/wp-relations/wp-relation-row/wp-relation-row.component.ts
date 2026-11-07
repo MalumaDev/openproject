@@ -27,7 +27,7 @@
 
 import { WorkPackageResource } from 'core-app/features/hal/resources/work-package-resource';
 import { PathHelperService } from 'core-app/core/path-helper/path-helper.service';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, Input, OnInit, ViewChild, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, ElementRef, Input, OnChanges, SimpleChanges, ViewChild, inject } from '@angular/core';
 import { I18nService } from 'core-app/core/i18n/i18n.service';
 import { HalEventsService } from 'core-app/features/hal/services/hal-events.service';
 import { WorkPackageNotificationService } from 'core-app/features/work-packages/services/notifications/work-package-notification.service';
@@ -37,6 +37,7 @@ import { RelationResource } from 'core-app/features/hal/resources/relation-resou
 import { WorkPackageRelationsService } from '../wp-relations.service';
 import { Highlighting } from 'core-app/features/work-packages/components/wp-fast-table/builders/highlighting/highlighting.functions';
 import { ProjectResource } from 'core-app/features/hal/resources/project-resource';
+import { Subscription } from 'rxjs';
 
 
 @Component({
@@ -49,7 +50,7 @@ import { ProjectResource } from 'core-app/features/hal/resources/project-resourc
   // eslint-disable-next-line @angular-eslint/prefer-on-push-component-change-detection
   changeDetection: ChangeDetectionStrategy.Eager,
 })
-export class WorkPackageRelationRowComponent extends UntilDestroyedMixin implements OnInit {
+export class WorkPackageRelationRowComponent extends UntilDestroyedMixin implements OnChanges {
   protected apiV3Service = inject(ApiV3Service);
   protected notificationService = inject(WorkPackageNotificationService);
   protected wpRelations = inject(WorkPackageRelationsService);
@@ -57,6 +58,8 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   protected I18n = inject(I18nService);
   protected cdRef = inject(ChangeDetectorRef);
   protected PathHelper = inject(PathHelperService);
+
+  private relatedWorkPackageSubscription?:Subscription;
 
   @Input() public workPackage:WorkPackageResource;
 
@@ -72,7 +75,7 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
 
   public showEditForm = false;
 
-  public availableRelationTypes:{ label:string, name:string }[];
+  public availableRelationTypes = RelationResource.LOCALIZED_RELATION_TYPES(false);
 
   public selectedRelationType:{ name:string };
 
@@ -104,14 +107,23 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
     },
   };
 
-  ngOnInit() {
-    this.relation = this.relatedWorkPackage.relatedBy!;
+  ngOnChanges(changes:SimpleChanges<WorkPackageRelationRowComponent>):void {
+    if (changes.relatedWorkPackage && this.relatedWorkPackage.relatedBy) {
+      this.relation = this.relatedWorkPackage.relatedBy;
+      this.cancelDescriptionEdit();
+    }
 
-    this.userInputs.newRelationText = this.relation.description || '';
-    this.availableRelationTypes = RelationResource.LOCALIZED_RELATION_TYPES(false);
-    this.selectedRelationType = this.availableRelationTypes.find((relationType) => relationType.name === this.relation.normalizedType(this.workPackage))!;
+    if (changes.relatedWorkPackage || changes.workPackage) {
+      this.selectedRelationType = this.availableRelationTypes.find((relationType) => relationType.name === this.relation.normalizedType(this.workPackage))!;
+      this.userInputs.showRelationTypesForm = false;
+    }
 
-    this
+    if (!changes.relatedWorkPackage || changes.relatedWorkPackage.previousValue?.id === this.relatedWorkPackage.id) {
+      return;
+    }
+
+    this.relatedWorkPackageSubscription?.unsubscribe();
+    this.relatedWorkPackageSubscription = this
       .apiV3Service
       .work_packages
       .id(this.relatedWorkPackage)
@@ -158,11 +170,11 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
 
   public cancelDescriptionEdit() {
     this.userInputs.showDescriptionEditForm = false;
-    this.userInputs.newRelationText = this.relation.description || '';
+    this.userInputs.newRelationText = this.relation.description ?? '';
   }
 
   public saveDescription() {
-    this.wpRelations.updateRelation(
+    void this.wpRelations.updateRelation(
       this.relation,
       { description: this.userInputs.newRelationText },
     )
@@ -220,7 +232,7 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
           relationType: this.relation.normalizedType(this.workPackage),
         });
 
-        this
+        void this
           .apiV3Service
           .work_packages
           .cache
