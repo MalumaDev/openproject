@@ -26,7 +26,7 @@
 //++
 
 import { WorkPackageResource } from 'core-app/features/hal/resources/work-package-resource';
-import { ChangeDetectionStrategy, ChangeDetectorRef, Component, Input, inject } from '@angular/core';
+import { ChangeDetectionStrategy, ChangeDetectorRef, Component, DestroyRef, Input, inject } from '@angular/core';
 import { I18nService } from 'core-app/core/i18n/i18n.service';
 import { HalEventsService } from 'core-app/features/hal/services/hal-events.service';
 import { WorkPackageNotificationService } from 'core-app/features/work-packages/services/notifications/work-package-notification.service';
@@ -46,6 +46,9 @@ export class WorkPackageRelationsCreateComponent {
   protected notificationService = inject(WorkPackageNotificationService);
   protected halEvents = inject(HalEventsService);
   protected cdRef = inject(ChangeDetectorRef);
+
+  private readonly destroyRef = inject(DestroyRef);
+  private formRevision = 0;
 
   @Input() readonly workPackage:WorkPackageResource;
 
@@ -73,26 +76,27 @@ export class WorkPackageRelationsCreateComponent {
   }
 
   protected createCommonRelation() {
-    return this.wpRelations.addCommonRelation(this.workPackage.id!,
-      this.selectedRelationType,
-      this.selectedWpId)
+    const { workPackage, selectedRelationType, selectedWpId, formRevision } = this;
+    return this.wpRelations.addCommonRelation(workPackage.id!, selectedRelationType, selectedWpId)
       .then((relation) => {
-        this.halEvents.push(this.workPackage, {
+        this.halEvents.push(workPackage, {
           eventType: 'association',
           relatedWorkPackage: relation.id!,
-          relationType: this.selectedRelationType,
+          relationType: selectedRelationType,
         });
-        this.notificationService.showSave(this.workPackage);
-        this.wpRelations.updateCounter(this.workPackage);
-        this.toggleRelationsCreateForm();
+        this.notificationService.showSave(workPackage);
+        this.wpRelations.updateCounter(workPackage);
       })
-      .catch((err) => {
-        this.notificationService.handleRawError(err, this.workPackage);
-        this.toggleRelationsCreateForm();
+      .catch((err:unknown) => this.notificationService.handleRawError(err, workPackage))
+      .finally(() => {
+        if (!this.destroyRef.destroyed && this.formRevision === formRevision && this.workPackage.id === workPackage.id) {
+          this.toggleRelationsCreateForm();
+        }
       });
   }
 
   public toggleRelationsCreateForm() {
+    this.formRevision += 1;
     this.showRelationsCreateForm = !this.showRelationsCreateForm;
     // Reset value
     this.selectedWpId = '';

@@ -106,17 +106,30 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   };
 
   ngOnChanges(changes:SimpleChanges<WorkPackageRelationRowComponent>):void {
+    const relatedWorkPackageChanged = changes.relatedWorkPackage !== undefined
+      && changes.relatedWorkPackage.previousValue?.id !== this.relatedWorkPackage.id;
+    const previousRelation = this.relation;
     if (changes.relatedWorkPackage && this.relatedWorkPackage.relatedBy) {
       this.relation = this.relatedWorkPackage.relatedBy;
-      this.cancelDescriptionEdit();
     }
 
     if (changes.relatedWorkPackage || changes.workPackage) {
-      this.selectedRelationType = this.availableRelationTypes.find((relationType) => relationType.name === this.relation.normalizedType(this.workPackage))!;
-      this.userInputs.showRelationTypesForm = false;
+      const workPackageChanged = changes.workPackage !== undefined
+        && changes.workPackage.previousValue?.id !== this.workPackage.id;
+      const rowChanged = relatedWorkPackageChanged || workPackageChanged
+        || this.relationIdentity(previousRelation) !== this.relationIdentity(this.relation);
+
+      if (rowChanged || !this.userInputs.showDescriptionEditForm) {
+        this.cancelDescriptionEdit();
+      }
+
+      if (rowChanged || !this.userInputs.showRelationTypesForm) {
+        this.selectedRelationType = this.availableRelationTypes.find((relationType) => relationType.name === this.relation.normalizedType(this.workPackage))!;
+        this.userInputs.showRelationTypesForm = false;
+      }
     }
 
-    if (!changes.relatedWorkPackage || changes.relatedWorkPackage.previousValue?.id === this.relatedWorkPackage.id) {
+    if (!relatedWorkPackageChanged) {
       return;
     }
 
@@ -173,16 +186,14 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   }
 
   public saveDescription() {
-    void this.wpRelations.updateRelation(
-      this.relation,
-      { description: this.userInputs.newRelationText },
-    )
-      .then((savedRelation:RelationResource) => {
-        this.relation = savedRelation;
-        this.relatedWorkPackage.relatedBy = savedRelation;
-        this.userInputs.showDescriptionEditForm = false;
-        this.notificationService.showSave(this.relatedWorkPackage);
-        this.cdRef.markForCheck();
+    const { workPackage, relatedWorkPackage, relation } = this;
+    void this.wpRelations.updateRelation(relation, { description: this.userInputs.newRelationText })
+      .then((savedRelation) => {
+        if (this.applySavedRelation(workPackage, relatedWorkPackage, relation, savedRelation)) {
+          this.userInputs.showDescriptionEditForm = false;
+          this.cdRef.markForCheck();
+        }
+        this.notificationService.showSave(relatedWorkPackage);
       });
   }
 
@@ -201,21 +212,43 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   }
 
   public saveRelationType() {
-    this.wpRelations.updateRelationType(
-      this.workPackage,
-      this.relatedWorkPackage,
-      this.relation,
-      this.selectedRelationType.name,
-    )
-      .then((savedRelation:RelationResource) => {
-        this.notificationService.showSave(this.relatedWorkPackage);
-        this.relatedWorkPackage.relatedBy = savedRelation;
-        this.relation = savedRelation;
-
-        this.userInputs.showRelationTypesForm = false;
-        this.cdRef.markForCheck();
+    const { workPackage, relatedWorkPackage, relation } = this;
+    this.wpRelations.updateRelationType(workPackage, relatedWorkPackage, relation, this.selectedRelationType.name)
+      .then((savedRelation) => {
+        this.notificationService.showSave(relatedWorkPackage);
+        if (this.applySavedRelation(workPackage, relatedWorkPackage, relation, savedRelation)) {
+          this.userInputs.showRelationTypesForm = false;
+          this.cdRef.markForCheck();
+        }
       })
-      .catch((error:unknown) => this.notificationService.handleRawError(error, this.workPackage));
+      .catch((error:unknown) => this.notificationService.handleRawError(error, workPackage));
+  }
+
+  private applySavedRelation(
+    workPackage:WorkPackageResource,
+    relatedWorkPackage:WorkPackageResource,
+    original:RelationResource,
+    saved:RelationResource,
+  ):boolean {
+    const relationIdentity = this.relationIdentity(original);
+    const isCurrent = this.workPackage.id === workPackage.id
+      && this.relatedWorkPackage.id === relatedWorkPackage.id
+      && this.relationIdentity(this.relation) === relationIdentity;
+
+    if (!isCurrent) {
+      if (this.relationIdentity(relatedWorkPackage.relatedBy) === relationIdentity) {
+        relatedWorkPackage.relatedBy = saved;
+      }
+      return false;
+    }
+
+    this.relatedWorkPackage.relatedBy = saved;
+    this.relation = saved;
+    return true;
+  }
+
+  private relationIdentity(relation:RelationResource|null|undefined) {
+    return relation?.href ?? relation;
   }
 
   public toggleUserDescriptionForm() {
@@ -223,26 +256,24 @@ export class WorkPackageRelationRowComponent extends UntilDestroyedMixin impleme
   }
 
   public removeRelation() {
-    this.wpRelations.removeRelation(this.relation)
+    const { workPackage, relatedWorkPackage, relation } = this;
+    this.wpRelations.removeRelation(relation)
       .then(() => {
-        this.halEvents.push(this.workPackage, {
+        this.halEvents.push(workPackage, {
           eventType: 'association',
           relatedWorkPackage: null,
-          relationType: this.relation.normalizedType(this.workPackage),
+          relationType: relation.normalizedType(workPackage),
         });
 
-        void this
-          .apiV3Service
-          .work_packages
-          .cache
-          .updateWorkPackage(this.relatedWorkPackage);
+        const currentRelatedWorkPackage = this.relatedWorkPackage.id === relatedWorkPackage.id
+          ? this.relatedWorkPackage
+          : relatedWorkPackage;
+        void this.apiV3Service.work_packages.cache.updateWorkPackage(currentRelatedWorkPackage);
 
-        this.wpRelations.updateCounter(this.workPackage);
-
-        this.notificationService.showSave(this.relatedWorkPackage);
+        this.wpRelations.updateCounter(workPackage);
+        this.notificationService.showSave(relatedWorkPackage);
       })
-      .catch((err:unknown) => this.notificationService.handleRawError(err,
-        this.relatedWorkPackage));
+      .catch((err:unknown) => this.notificationService.handleRawError(err, relatedWorkPackage));
   }
 
   public highlightingClassForWpType():string {

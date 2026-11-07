@@ -43,6 +43,7 @@ import { SchemaCacheService } from 'core-app/core/schemas/schema-cache.service';
 import { RelationResource } from 'core-app/features/hal/resources/relation-resource';
 import { SchemaResource } from 'core-app/features/hal/resources/schema-resource';
 import { WorkPackageResource } from 'core-app/features/hal/resources/work-package-resource';
+import { HalEventsService } from 'core-app/features/hal/services/hal-events.service';
 import { HalResourceService } from 'core-app/features/hal/services/hal-resource.service';
 import { WorkPackageInlineCreateComponent } from 'core-app/features/work-packages/components/wp-inline-create/wp-inline-create.component';
 import { WorkPackageInlineCreateService } from 'core-app/features/work-packages/components/wp-inline-create/wp-inline-create.service';
@@ -215,7 +216,9 @@ describe('work package relation interactions', () => {
   });
 
   function workPackage(id:number, subject:string) {
-    streams.set(String(id), new Subject());
+    if (!streams.has(String(id))) {
+      streams.set(String(id), new Subject());
+    }
     return hal.createHalResource<WorkPackageResource>({
       _type: 'WorkPackage',
       subject,
@@ -227,15 +230,16 @@ describe('work package relation interactions', () => {
     });
   }
 
-  function relation(from:WorkPackageResource, to:WorkPackageResource, description:string, removable = true) {
+  function relation(from:WorkPackageResource, to:WorkPackageResource, description:string, { removable = true, id = 1 } = {}) {
+    const href = `/api/v3/relations/${id}`;
     const record = hal.createHalResourceOfClass(RelationResource, {
       _type: 'Relation',
       type: 'relates',
       reverseType: 'relates',
       description,
       _links: {
-        self: { href: '/api/v3/relations/1' },
-        ...(removable ? { delete: { href: '/api/v3/relations/1', method: 'delete' } } : {}),
+        self: { href },
+        ...(removable ? { delete: { href, method: 'delete' } } : {}),
       },
     });
     record.from = from;
@@ -300,6 +304,31 @@ describe('work package relation interactions', () => {
     expect(notification.handleRawError.mock.calls).toEqual(success ? [] : [[error, wp]]);
   });
 
+  it('publishes a pending create against its original work package after replacement', async () => {
+    const fixture = TestBed.createComponent(WorkPackageRelationsCreateComponent);
+    const wp = workPackage(1, 'Current');
+    const candidate = workPackage(2, 'Candidate');
+    const replacement = workPackage(3, 'Replacement');
+    const { promise, resolve } = deferred<RelationResource>();
+    relations.addCommonRelation.mockReturnValue(promise);
+    const push = vi.spyOn(TestBed.inject(HalEventsService), 'push');
+    fixture.componentRef.setInput('workPackage', wp);
+    await fixture.whenStable();
+
+    fireEvent.click(screen.getByRole('button', { name: 'js.relation_buttons.add_new_relation' }));
+    await screen.findByRole('listbox');
+    const autocomplete = fixture.debugElement.query(
+      (node) => node.componentInstance instanceof AutocompleteStubComponent,
+    ).componentInstance as AutocompleteStubComponent;
+    selectWorkPackage(candidate, autocomplete);
+    fixture.componentRef.setInput('workPackage', replacement);
+    await fixture.whenStable();
+
+    resolve(relation(wp, candidate, ''));
+    await waitFor(() => expect(push).toHaveBeenCalledWith(wp, expect.objectContaining({ relationType: 'relates' })));
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+  });
+
   it.each([true, false])('settles the add-existing autocomplete (success=%s)', async (success) => {
     const wp = workPackage(1, 'Current');
     const related = workPackage(2, 'Related');
@@ -334,6 +363,45 @@ describe('work package relation interactions', () => {
     expect(referenced.mock.calls).toEqual(success ? [['2']] : []);
     expect(notification.handleRawError.mock.calls).toEqual(success ? [] : [[error, wp]]);
     referencedSubscription.unsubscribe();
+  });
+
+  it('does not publish a late inline reference or reset a replacement row', async () => {
+    const wp = workPackage(1, 'Current');
+    const candidate = workPackage(2, 'Candidate');
+    const replacement = workPackage(3, 'Replacement');
+    const { promise, resolve } = deferred<Awaited<ReturnType<WpRelationInlineCreateServiceInterface['add']>>>();
+    inlineCreate = {
+      referenceTarget: wp,
+      relationType: 'children',
+      newInlineWorkPackageReferenced: new Subject(),
+      add: vi.fn<WpRelationInlineCreateServiceInterface['add']>().mockReturnValue(promise),
+    };
+    const push = vi.spyOn(TestBed.inject(HalEventsService), 'push');
+    const fixture = TestBed.createComponent(WpRelationInlineAddExistingComponent);
+    await fixture.whenStable();
+    const autocomplete = fixture.debugElement.query(
+      (node) => node.componentInstance instanceof AutocompleteStubComponent,
+    ).componentInstance as AutocompleteStubComponent;
+
+    const referenced = vi.fn<typeof inlineCreate.newInlineWorkPackageReferenced.next>();
+    const subscription = inlineCreate.newInlineWorkPackageReferenced.subscribe(referenced);
+    try {
+      selectWorkPackage(candidate, autocomplete);
+      expect(inlineCreate.add).toHaveBeenCalledExactlyOnceWith(wp, '2');
+      fixture.destroy();
+      inlineCreate.referenceTarget = replacement;
+      resolve(undefined);
+
+      // The next browser task runs after the request's then, catch and finally microtasks.
+      await new Promise<void>((settled) => setTimeout(settled));
+      expect(push).toHaveBeenCalledExactlyOnceWith(wp, expect.objectContaining({
+        eventType: 'association', relatedWorkPackage: '2', relationType: 'children',
+      }));
+      expect(referenced).not.toHaveBeenCalled();
+      expect(resetRow).not.toHaveBeenCalled();
+    } finally {
+      subscription.unsubscribe();
+    }
   });
 
   it('saves a relation description in place and removes the relation', async () => {
@@ -371,6 +439,111 @@ describe('work package relation interactions', () => {
     expect(relations.updateCounter).toHaveBeenCalledWith(wp);
   });
 
+  it.each([2, 3])('resets editors and keeps a pending save on the original relation when replaced by a relation to work package %i', async (replacementId) => {
+    const wp = workPackage(1, 'Current');
+    const related = workPackage(2, 'Related');
+    const replacement = workPackage(replacementId, 'Replacement');
+    related.relatedBy = relation(wp, related, 'Original description');
+    const replacementRelation = relation(wp, replacement, 'Replacement description', { id: 2 });
+    replacement.relatedBy = replacementRelation;
+    const { promise, resolve } = deferred<RelationResource>();
+    relations.updateRelation.mockReturnValue(promise);
+    const fixture = TestBed.createComponent(WorkPackageRelationRowComponent);
+    fixture.componentRef.setInput('workPackage', wp);
+    fixture.componentRef.setInput('relatedWorkPackage', related);
+    fixture.componentRef.setInput('groupByWorkPackageType', true);
+    await fixture.whenStable();
+
+    fireEvent.click(screen.getByRole('button', { name: 'js.relation_buttons.toggle_description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Original description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'js.button_save' }));
+    fireEvent.click(screen.getByRole('button', { name: /js.relation_labels.relates/ }));
+    expect(await screen.findByRole('listbox')).toBeInTheDocument();
+
+    fixture.componentRef.setInput('relatedWorkPackage', replacement);
+    expect(await screen.findByRole('button', { name: 'Replacement description' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+
+    const saved = relation(wp, related, 'Saved description');
+    resolve(saved);
+    await promise;
+    await fixture.whenStable();
+    expect(replacement.relatedBy).toBe(replacementRelation);
+    expect(related.relatedBy).toBe(saved);
+    expect(screen.getByRole('button', { name: 'Replacement description' })).toBeInTheDocument();
+  });
+
+  it('preserves a description draft when the related work package refreshes', async () => {
+    const wp = workPackage(1, 'Current');
+    const related = workPackage(2, 'Related');
+    related.relatedBy = relation(wp, related, 'Original description');
+    const fixture = TestBed.createComponent(WorkPackageRelationRowComponent);
+    fixture.componentRef.setInput('workPackage', wp);
+    fixture.componentRef.setInput('relatedWorkPackage', related);
+    fixture.componentRef.setInput('groupByWorkPackageType', true);
+    await fixture.whenStable();
+
+    fireEvent.click(screen.getByRole('button', { name: 'js.relation_buttons.toggle_description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Original description' }));
+    const description = await screen.findByRole('textbox');
+    fireEvent.input(description, { target: { value: 'Unsaved draft' } });
+    await fixture.whenStable();
+
+    const refreshed = workPackage(2, 'Refreshed subject');
+    refreshed.relatedBy = relation(wp, refreshed, 'Refreshed description');
+    expect(refreshed).not.toBe(related);
+    expect(refreshed.id).toBe('2');
+    expect(refreshed.relatedBy).not.toBe(related.relatedBy);
+    expect(refreshed.relatedBy.href).toBe(related.relatedBy.href);
+    fixture.componentRef.setInput('relatedWorkPackage', refreshed);
+
+    expect(await screen.findByRole('link', { name: /Refreshed subject/ })).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toBe(description);
+    expect(description).toHaveValue('Unsaved draft');
+
+    fireEvent.click(screen.getByRole('button', { name: 'js.button_cancel' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Refreshed description' }));
+    expect(await screen.findByRole('textbox')).toHaveValue('Refreshed description');
+  });
+
+  it('preserves the type editor when the owning work package refreshes', async () => {
+    const wp = workPackage(1, 'Current');
+    const related = workPackage(2, 'Related');
+    const original = relation(wp, related, '');
+    related.relatedBy = original;
+    const { promise, resolve } = deferred<RelationResource>();
+    relations.updateRelationType.mockReturnValue(promise);
+    const fixture = TestBed.createComponent(WorkPackageRelationRowComponent);
+    fixture.componentRef.setInput('workPackage', wp);
+    fixture.componentRef.setInput('relatedWorkPackage', related);
+    fixture.componentRef.setInput('groupByWorkPackageType', true);
+    await fixture.whenStable();
+
+    fireEvent.click(screen.getByRole('button', { name: /js.relation_labels.relates/ }));
+    const listbox = await screen.findByRole('listbox');
+    const blocks = within(listbox).getByRole<HTMLOptionElement>('option', { name: /blocks/i });
+    fireEvent.change(listbox, { target: { value: blocks.value } });
+    expect(relations.updateRelationType).toHaveBeenCalledExactlyOnceWith(wp, related, original, 'blocks');
+    await fixture.whenStable();
+    expect(listbox).toHaveValue(blocks.value);
+
+    const refreshed = workPackage(1, 'Refreshed owner');
+    expect(refreshed).not.toBe(wp);
+    expect(refreshed.id).toBe('1');
+    fixture.componentRef.setInput('workPackage', refreshed);
+    await fixture.whenStable();
+
+    expect(screen.getByRole('listbox')).toBe(listbox);
+    expect(listbox).toHaveValue(blocks.value);
+
+    const saved = relation(refreshed, related, '');
+    saved.type = 'blocks';
+    resolve(saved);
+    expect(await screen.findByRole('button', { name: /js.relation_labels.blocks/ })).toBeInTheDocument();
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
   it('renders a saved relation type after the request settles', async () => {
     const wp = workPackage(1, 'Current');
     const related = workPackage(2, 'Related');
@@ -397,6 +570,46 @@ describe('work package relation interactions', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
+  it('renders both successful overlapping saves to the same logical relation', async () => {
+    const wp = workPackage(1, 'Current');
+    const related = workPackage(2, 'Related');
+    const original = relation(wp, related, 'Original description');
+    related.relatedBy = original;
+    const descriptionSave = deferred<RelationResource>();
+    const typeSave = deferred<RelationResource>();
+    relations.updateRelation.mockReturnValue(descriptionSave.promise);
+    relations.updateRelationType.mockReturnValue(typeSave.promise);
+    const fixture = TestBed.createComponent(WorkPackageRelationRowComponent);
+    fixture.componentRef.setInput('workPackage', wp);
+    fixture.componentRef.setInput('relatedWorkPackage', related);
+    fixture.componentRef.setInput('groupByWorkPackageType', true);
+    await fixture.whenStable();
+
+    fireEvent.click(screen.getByRole('button', { name: 'js.relation_buttons.toggle_description' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Original description' }));
+    fireEvent.input(await screen.findByRole('textbox'), { target: { value: 'Updated description' } });
+    fireEvent.click(screen.getByRole('button', { name: 'js.button_save' }));
+    fireEvent.click(screen.getByRole('button', { name: /js.relation_labels.relates/ }));
+    const listbox = await screen.findByRole('listbox');
+    const blocks = within(listbox).getByRole<HTMLOptionElement>('option', { name: /blocks/i });
+    fireEvent.change(listbox, { target: { value: blocks.value } });
+    await fixture.whenStable();
+    expect(relations.updateRelation).toHaveBeenCalledExactlyOnceWith(original, { description: 'Updated description' });
+    expect(relations.updateRelationType).toHaveBeenCalledExactlyOnceWith(wp, related, original, 'blocks');
+
+    const withDescription = relation(wp, related, 'Updated description');
+    descriptionSave.resolve(withDescription);
+    expect(await screen.findByRole('button', { name: 'Updated description' })).toBeInTheDocument();
+    expect(related.relatedBy).toBe(withDescription);
+
+    const withBothChanges = relation(wp, related, 'Updated description');
+    withBothChanges.type = 'blocks';
+    typeSave.resolve(withBothChanges);
+    expect(await screen.findByRole('button', { name: /js.relation_labels.blocks/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Updated description' })).toBeInTheDocument();
+    expect(related.relatedBy).toBe(withBothChanges);
+  });
+
   it('renders same-object row publications and replaces the relation and its owned subscription', async () => {
     const wp = workPackage(1, 'Current');
     const related = workPackage(2, 'Related');
@@ -413,7 +626,7 @@ describe('work package relation interactions', () => {
     expect(await screen.findByRole('link', { name: /Published subject/ })).toBeInTheDocument();
 
     const replacement = workPackage(3, 'Replacement');
-    replacement.relatedBy = relation(wp, replacement, 'Replacement description', false);
+    replacement.relatedBy = relation(wp, replacement, 'Replacement description', { id: 2, removable: false });
     fixture.componentRef.setInput('relatedWorkPackage', replacement);
     expect(await screen.findByRole('link', { name: /Replacement/ })).toBeInTheDocument();
     expect(previous.observed).toBe(false);
