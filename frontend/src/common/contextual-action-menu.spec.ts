@@ -421,6 +421,22 @@ describe('ContextualActionMenu', () => {
       expect(Number(overlay.getAttribute('alignment-offset'))).toBe(100 - 40 - CARD_LEFT);
     });
 
+    it('keeps a flipped menu inside a viewport that shrank under it', () => {
+      overlay.style.cssText = 'min-width: 0; width: 240px; height: 200px';
+      const innerWidth = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1000);
+      const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800);
+      presenter.openAtPoint(700, 550, card);
+
+      innerWidth.mockReturnValue(600);
+      innerHeight.mockReturnValue(400);
+      fireEvent.resize(window);
+
+      const left = CARD_LEFT + Number(overlay.getAttribute('alignment-offset'));
+      const top = card.getBoundingClientRect().bottom + overlay.anchorOffset;
+      expect(left + 240).toBeLessThanOrEqual(600);
+      expect(top + 200).toBeLessThanOrEqual(400);
+    });
+
     it('stops refitting once the presenter is destroyed', async () => {
       overlay.style.cssText = 'min-width: 0; width: 20px';
       presenter.openAtPoint(window.innerWidth - 50, 100, card);
@@ -459,6 +475,17 @@ describe('ContextualActionMenu', () => {
       // The overlay's own gap (`anchor-offset="spacious"`) stays in force.
       expect(overlay.anchorOffset).toBe(8);
       expect(popover.matches(':popover-open')).toBe(true);
+    });
+
+    it('stops refitting a pointer open it takes over from', () => {
+      presenter.openAtPoint(POINTER_X, POINTER_Y, card);
+      presenter.openAtAnchor(invoker, { align: 'end' });
+
+      fireEvent.resize(window);
+
+      expect(overlay).not.toHaveAttribute('alignment-offset');
+      expect(overlay).not.toHaveAttribute('allow-out-of-bounds');
+      expect(overlay.anchorElement).toBe(invoker);
     });
 
     it('restores the original anchoring when the menu closes', async () => {

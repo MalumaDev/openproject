@@ -155,6 +155,7 @@ export class ContextualActionMenu {
       return;
     }
 
+    this.stopFittingPointer();
     this.saveOverlayState(overlay);
     overlay.anchorElement = anchor;
     overlay.removeAttribute('anchor');
@@ -162,6 +163,7 @@ export class ContextualActionMenu {
     overlay.setAttribute('side', CONTEXTUAL_SIDE);
     overlay.removeAttribute('alignment-offset');
     clearAnchorOffset(overlay);
+    overlay.toggleAttribute('allow-out-of-bounds', this.savedState?.allowOutOfBounds ?? false);
     overlay.update();
     this.show(overlay, popover, returnFocusTo);
   }
@@ -257,13 +259,16 @@ export class ContextualActionMenu {
 
     let left = clientX;
     if (clientX + width > view.innerWidth) {
-      left = Math.max(0, clientX - width);
+      left = clientX - width;
     }
 
     let top = clientY;
     if (clientY + height > view.innerHeight) {
-      top = clientY - height >= 0 ? clientY - height : Math.max(0, view.innerHeight - height);
+      top = clientY - height >= 0 ? clientY - height : view.innerHeight - height;
     }
+
+    left = Math.max(0, Math.min(left, view.innerWidth - width));
+    top = Math.max(0, Math.min(top, view.innerHeight - height));
 
     overlay.setAttribute('alignment-offset', `${left - anchorRect.left}`);
     setAnchorOffset(overlay, top - anchorRect.bottom);
@@ -279,6 +284,12 @@ export class ContextualActionMenu {
     observer.observe(overlay);
     signal.addEventListener('abort', () => observer.disconnect(), { once: true });
     (overlay.ownerDocument.defaultView ?? window).addEventListener('resize', refit, { signal });
+  }
+
+  private stopFittingPointer():void {
+    this.pointer = undefined;
+    this.refit?.abort();
+    this.refit = undefined;
   }
 
   private saveOverlayState(overlay:AnchoredPositionElement):void {
@@ -299,9 +310,7 @@ export class ContextualActionMenu {
   private restoreOverlayState(overlay:AnchoredPositionElement):boolean {
     const state = this.savedState;
     this.savedState = undefined;
-    this.pointer = undefined;
-    this.refit?.abort();
-    this.refit = undefined;
+    this.stopFittingPointer();
     if (!state) {
       return false;
     }
